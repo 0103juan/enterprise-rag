@@ -1,0 +1,33 @@
+{"question": "How much can I spend on food per day when travelling in the US?", "expected": "expense-policy.md#meals", "answer": "$75 per day."}
+{"question": "What is the meal allowance for a trip to Germany?", "expected": "expense-policy.md#meals", "answer": "€70 per day in the EU."}
+{"question": "Can I fly premium economy to Singapore?", "expected": "expense-policy.md#flights", "answer": "Yes, premium economy is allowed for flights of six hours or longer."}
+{"question": "What's the maximum hotel rate in London?", "expected": "expense-policy.md#hotels", "answer": "$300 per night, because London is a tier-1 city."}
+{"question": "Which form do I use to get reimbursed and what is the deadline?", "expected": "expense-policy.md#submitting-a-claim", "answer": "Form FIN-204, within 30 days of the end of the trip."}
+{"question": "Is FIN-117 still valid?", "expected": "expense-policy-2023-archived.md#submitting-a-claim-2023-archived", "answer": "No, FIN-117 was retired on 1 January 2025; use FIN-204."}
+{"question": "Who signs off a $4,000 expense report?", "expected": "expense-policy.md#approval-limits", "answer": "A Vice President, since it is above the $2,500 manager limit."}
+{"question": "How many vacation days roll over to next year?", "expected": "pto-policy.md#carryover", "answer": "Up to 5 days, which must be used by 31 March."}
+{"question": "Do freelancers get holiday pay?", "expected": "pto-policy.md#annual-allowance", "answer": "No, contractors are not eligible for paid time off."}
+{"question": "How far ahead do I need to book a week off?", "expected": "pto-policy.md#requesting-time-off", "answer": "At least two weeks in advance, in Workday."}
+{"question": "When do I need a medical certificate?", "expected": "pto-policy.md#sick-leave", "answer": "For an absence longer than three consecutive days."}
+{"question": "How long is leave for a new father who is not the main carer?", "expected": "pto-policy.md#parental-leave", "answer": "6 weeks as the secondary caregiver."}
+{"question": "Can I log in to prod with a text message code?", "expected": "security-policy.md#passwords-and-authentication", "answer": "No, production access requires a hardware security key."}
+{"question": "I left my laptop in a taxi. What now?", "expected": "security-policy.md#lost-or-stolen-devices", "answer": "Report it to security@meridianfreight.example within one hour."}
+{"question": "Can I email a customer's card number to our payment vendor?", "expected": "security-policy.md#data-classification", "answer": "No, payment details are Restricted data and must not be sent to external email."}
+{"question": "E-4417", "expected": "incident-response.md#known-error-codes", "answer": "The carrier rate API timed out; fail over to the secondary gateway."}
+{"question": "The label printers stopped working at the warehouse, what do I restart?", "expected": "incident-response.md#known-error-codes", "answer": "Restart the labeld service on the affected warehouse node (error E-2203)."}
+{"question": "How often should customers be updated during a major outage?", "expected": "incident-response.md#sev1-procedure", "answer": "Every 30 minutes on the public status page."}
+{"question": "What is the deadline for writing up an incident afterwards?", "expected": "incident-response.md#postmortems", "answer": "Within five business days."}
+{"question": "How quickly must I ack a SEV2 page?", "expected": "oncall.md#response-times", "answer": "Within 15 minutes."}
+{"question": "What do I get paid for being woken up at 3am by a page?", "expected": "oncall.md#compensation", "answer": "$100 per out-of-hours page on top of the $400 weekly stipend, plus a compensatory day off."}
+{"question": "How long do we keep backups?", "expected": "data-retention.md#retention-periods", "answer": "35 days."}
+{"question": "A former client wants their data erased. Who handles it and how fast?", "expected": "data-retention.md#data-subject-requests", "answer": "Forward it to privacy@meridianfreight.example; it must be completed within 30 days."}
+{"question": "Can we delete records that are part of a lawsuit if the customer asks?", "expected": "data-retention.md#legal-hold", "answer": "No, a legal hold overrides retention periods and deletion requests."}
+{"question": "How many bids do I need for a $15,000 purchase?", "expected": "procurement.md#competitive-quotes", "answer": "Three written quotes from independent vendors."}
+{"question": "What is SEC-9?", "expected": "procurement.md#vendor-security-review", "answer": "The security questionnaire a vendor handling Confidential or Restricted data must complete before signing."}
+{"question": "Who has to sign a $80k software contract?", "expected": "procurement.md#contract-approval", "answer": "Legal reviews it and the Chief Financial Officer signs."}
+{"question": "Which days am I expected in the office?", "expected": "remote-work.md#office-attendance", "answer": "At least two days a week; Tuesday and Thursday are the anchor days."}
+{"question": "Does the company help with my broadband bill?", "expected": "remote-work.md#home-office-stipend", "answer": "Yes, $50 per month toward home internet."}
+{"question": "Can I work from Portugal for two months?", "expected": "remote-work.md#working-from-abroad", "answer": "No, the limit is 30 days per year; longer stays require a formal relocation."}
+{"question": "And for someone working part-time?", "history": "How many days of paid leave do employees get per year?", "expected": "pto-policy.md#annual-allowance", "answer": "Part-time employees accrue pro rata."}
+{"question": "What about in San Francisco?", "history": "What is the nightly hotel limit?", "expected": "expense-policy.md#hotels", "answer": "$300 per night, as a tier-1 city."}
+{"question": "What is the dress code for the office?", "expected": null, "answer": "Not covered by the documents; the system should say it does not know."}

@@ -1,0 +1,17 @@
+  FAIL 'What is the meal allowance for a trip to Germany?'
+       -> I don't know based on the available documents.
+       unsupported: []
+  FAIL 'Do freelancers get holiday pay?'
+       -> I don't know based on the available documents.
+       unsupported: []
+  FAIL 'I left my laptop in a taxi. What now?'
+       -> I don't know based on the available documents.
+       unsupported: []
+  FAIL "Can I email a customer's card number to our payment vendor?"
+       -> Customer payment details are Restricted data, which must never be sent to external email addresses [1]. The passages do not say whether a payment vendor's address counts as external, so I can't confirm that from the documents alone. If the vendor will store or process this data, it must also complete security questionnaire SEC-9 before a contract is signed [3].
+       unsupported: []
+expected chunk retrieved   96.9%
+expected chunk cited       90.6%
+answer correct             87.9%
+groundedness               100.0%
+33 questions, {'calls': 135, 'input_tokens': 78108, 'output_tokens': 9573}, $0.25 ($0.0076 per question)
