@@ -1,5 +1,7 @@
 # enterprise-rag
 
+[![CI](https://github.com/0103juan/enterprise-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/0103juan/enterprise-rag/actions/workflows/ci.yml)
+
 A retrieval-augmented generation pipeline for company policy documents, built to show what it takes to go from "vector search plus a prompt" to answers you can check.
 
 ```
