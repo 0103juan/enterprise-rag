@@ -132,3 +132,7 @@ evaluate.py    retrieval ablation and end-to-end evaluation, both gated by gates
 data/docs/     the corpus          data/golden.jsonl   questions, expected chunks, reference answers
 test_rag.py    unit tests for the pieces that need no model
 ```
+
+## License
+
+[MIT](LICENSE).
