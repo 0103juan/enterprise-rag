@@ -72,18 +72,41 @@ So this configuration buys zero unsupported claims at the price of refusing abou
 
 Caveats: correctness is graded by the same model family that wrote the answers, the set is the one I developed against, and this is a single run.
 
+## Operating it
+
+**The evaluation is a gate, not a report.** `evaluate.py` exits with an error when a metric falls below its floor in `gates.json`, and CI runs it on every push and pull request (`.github/workflows/ci.yml`). The retrieval evaluation uses local models only, so that gate is free and has no secrets. Moving a floor is a change to `gates.json` that shows up in the diff.
+
+| Gate | Floor | Last accepted run | What the margin allows |
+|---|---|---|---|
+| Retrieval hit@1 / hit@3 / MRR@5 | 0.76 / 0.96 / 0.86 | 0.767 / 0.967 / 0.867 | Nothing: the models are deterministic, so losing one question fails |
+| Expected chunk retrieved | 0.93 | 0.969 | One question |
+| Expected chunk cited | 0.84 | 0.906 | Two questions |
+| Answer correct | 0.81 | 0.879 | Two questions, because a single model run is noisy |
+| Groundedness | 0.97 | 1.0 | About one unsupported claim across the whole set |
+| Cost per question | $0.01 at most | see below | A budget, not a measurement |
+
+To see it fail, I cut the candidate pool from 12 to 2 on my machine: hit@1 fell to 0.700, hit@3 to 0.833, and the run ended with `REGRESSION` and exit code 1.
+
+The end-to-end gates call Claude, so they run only when the workflow is started by hand with the `generation` box ticked, and they need an `ANTHROPIC_API_KEY` repository secret. **That job has not been run in CI yet**; the end-to-end numbers above come from a run on my machine.
+
+**Every question leaves a trace.** `answer()` times each stage and charges every model call to the stage that made it. The command line and the evaluation append one JSON line per question to `traces.jsonl`: the rewritten queries, the chunks retrieved and cited, the answer, whether it abstained, unsupported claims, and a span per stage with duration, calls, tokens, the model that answered, and cost. A corrective pass shows up as a second `generate` and `judge` span, so its price is visible.
+
+**Cost per question comes from the traces**, split by stage, with p50 and p95 latency: `uv run python tracing.py`. The $0.0076 per question reported above is from before tracing existed and includes the grader's calls, which are an evaluation cost and not a serving cost. The per-stage split has not been measured against the live model yet; the next end-to-end run produces it. Prices are list prices in `tracing.py`.
+
 ## Run it
 
 ```bash
 uv sync
-uv run pytest                                   # 6 fast tests, no downloads, no API key
-uv run python evaluate.py                       # retrieval ablation (downloads ~150 MB of ONNX models once)
+uv run pytest                                   # 8 fast tests, no downloads, no API key
+uv run python evaluate.py                       # retrieval ablation and its gates (downloads ~150 MB of ONNX models once)
 uv run python pipeline.py "How many vacation days roll over to next year?"   # needs ANTHROPIC_API_KEY
+uv run python tracing.py                        # latency and cost per stage of the questions in traces.jsonl
 ```
 
 ## Design decisions
 
-- **No framework.** Retrieval is about 130 lines (`retrieval.py`) and the pipeline about 140 (`pipeline.py`). BM25 and RRF are written out because they are short and it keeps every ranking decision inspectable.
+- **No framework.** Retrieval is about 130 lines (`retrieval.py`) and the pipeline about 170 (`pipeline.py`). BM25 and RRF are written out because they are short and it keeps every ranking decision inspectable.
+- **Traces are JSON lines, not OpenTelemetry.** There is no collector to send spans to here, so a 70-line module does the job. The stage names and attributes would carry over to OpenTelemetry spans unchanged.
 - **Local embeddings and reranker** through `fastembed` (ONNX, CPU). No embedding API, and retrieval quality can be measured without spending tokens.
 - **Structured outputs** for the rewriter and the judge, parsed into Pydantic models, so there is no JSON scraping.
 - **Fail closed.** If the judge cannot return a verdict, the answer counts as unverified. If the model declines, the pipeline abstains.
@@ -95,13 +118,15 @@ uv run python pipeline.py "How many vacation days roll over to next year?"   # n
 - The hallucination judge is the same model family as the generator, so their blind spots correlate. It has not been validated against human labels, and a 100% groundedness score from it is weaker evidence than the same score from a human reviewer.
 - The corrective loop runs once. An answer that still has unsupported claims is returned with those claims listed, and the caller decides what to do.
 - English only: both local models are English models.
+- A red check does not stop a direct push to `main`; it stops a merge only once branch protection requires the check. Traces stay in a local file, with the question and the answer in clear text, and nothing alerts on them.
 
 ## Layout
 
 ```
 retrieval.py   chunking, BM25, RRF, dense search, reranking
 pipeline.py    rewrite, generate, judge, and answer() which ties them together
-evaluate.py    retrieval ablation and end-to-end evaluation
+tracing.py     spans per stage, traces.jsonl, latency and cost summary
+evaluate.py    retrieval ablation and end-to-end evaluation, both gated by gates.json
 data/docs/     the corpus          data/golden.jsonl   questions, expected chunks, reference answers
 test_rag.py    unit tests for the pieces that need no model
 ```

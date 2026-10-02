@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      generation:
+        description: Also run the end-to-end evaluation with Claude (about $0.25 of API credit)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  FASTEMBED_CACHE_PATH: ${{ github.workspace }}/.models
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - run: uv sync --locked
+      - run: uv run pytest
+      - uses: actions/cache@v6
+        with:
+          path: .models
+          key: models-${{ hashFiles('retrieval.py') }}
+      - name: Retrieval evaluation (fails below gates.json)
+        run: uv run python evaluate.py
+      - name: End-to-end evaluation with Claude (fails below gates.json or over the cost budget)
+        if: inputs.generation
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: uv run python evaluate.py --generation
+      - if: inputs.generation && !cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: traces
+          path: traces.jsonl

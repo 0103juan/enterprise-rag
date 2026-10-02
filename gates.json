@@ -1,0 +1,10 @@
+{
+  "retrieval": {"hit@1": 0.76, "hit@3": 0.96, "MRR@5": 0.86},
+  "generation": {
+    "expected chunk retrieved": 0.93,
+    "expected chunk cited": 0.84,
+    "answer correct": 0.81,
+    "groundedness": 0.97
+  },
+  "max_usd_per_question": 0.01
+}

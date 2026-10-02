@@ -2,12 +2,14 @@
 
 import re
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import anthropic
 from pydantic import BaseModel
 
+import tracing
 from retrieval import Chunk, Index
 
 # A safety decline is re-run server-side on Anthropic's recommended fallback model.
@@ -57,11 +59,13 @@ class Verdict(BaseModel):
 
 @dataclass
 class Result:
+    question: str
     answer: str
     queries: list[str]
     retrieved: list[Chunk]
     sources: list[Chunk]  # the retrieved passages the answer actually cites
     claims: list[Claim]
+    spans: list[dict]  # one per stage, in order; a corrective pass adds a second generate and judge
 
     @property
     def unsupported(self) -> list[str]:
@@ -71,14 +75,33 @@ class Result:
     def groundedness(self) -> float:
         return 1 - len(self.unsupported) / len(self.claims) if self.claims else 1.0
 
+    @property
+    def usd(self) -> float:
+        return sum(span["usd"] for span in self.spans)
+
+    @property
+    def trace(self) -> dict:
+        return {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "question": self.question, "queries": self.queries,
+                "retrieved": [c.id for c in self.retrieved], "cited": [c.id for c in self.sources],
+                "answer": self.answer, "abstained": self.answer == ABSTAIN, "groundedness": self.groundedness,
+                "unsupported": self.unsupported, "ms": sum(span["ms"] for span in self.spans),
+                "usd": self.usd, "spans": self.spans}
+
 
 def _context(chunks: list[Chunk]) -> str:
     return "\n\n".join(f"[{n}] {chunk.text}" for n, chunk in enumerate(chunks, 1))
 
 
+def call_model(client, method: str, **request):
+    """Every model call goes through here, so its tokens are charged to the stage that made it."""
+    response = getattr(client.beta.messages, method)(**LLM, **request)
+    tracing.record(response)
+    return response
+
+
 def rewrite(client, question: str, history: str = "") -> list[str]:
-    response = client.beta.messages.parse(
-        **LLM, system=REWRITE_SYSTEM, output_config={"effort": "low"}, output_format=Rewrite,
+    response = call_model(
+        client, "parse", system=REWRITE_SYSTEM, output_config={"effort": "low"}, output_format=Rewrite,
         messages=[{"role": "user",
                    "content": f"<history>\n{history}\n</history>\n\n<question>\n{question}\n</question>"}])
     parsed = response.parsed_output
@@ -88,8 +111,8 @@ def rewrite(client, question: str, history: str = "") -> list[str]:
 
 
 def generate(client, question: str, chunks: list[Chunk], correction: str = "") -> str:
-    response = client.beta.messages.create(
-        **LLM, system=GENERATE_SYSTEM, output_config={"effort": "low"},
+    response = call_model(
+        client, "create", system=GENERATE_SYSTEM, output_config={"effort": "low"},
         messages=[{"role": "user", "content":
                    f"<context>\n{_context(chunks)}\n</context>\n\n<question>\n{question}\n</question>{correction}"}])
     if response.stop_reason == "refusal":
@@ -98,8 +121,8 @@ def generate(client, question: str, chunks: list[Chunk], correction: str = "") -
 
 
 def judge(client, answer: str, chunks: list[Chunk]) -> list[Claim]:
-    response = client.beta.messages.parse(
-        **LLM, system=JUDGE_SYSTEM, output_config={"effort": "medium"}, output_format=Verdict,
+    response = call_model(
+        client, "parse", system=JUDGE_SYSTEM, output_config={"effort": "medium"}, output_format=Verdict,
         messages=[{"role": "user", "content":
                    f"<passages>\n{_context(chunks)}\n</passages>\n\n<answer>\n{answer}\n</answer>"}])
     if response.parsed_output is None:  # fail closed: an answer we could not verify is not grounded
@@ -108,12 +131,19 @@ def judge(client, answer: str, chunks: list[Chunk]) -> list[Claim]:
 
 
 def answer(client, index: Index, question: str, history: str = "") -> Result:
-    queries = rewrite(client, question, history)
-    chunks = index.search(queries)
+    spans = []
+    with tracing.span(spans, "rewrite"):
+        queries = rewrite(client, question, history)
+    with tracing.span(spans, "retrieve"):
+        chunks = index.search(queries)
 
     def attempt(correction: str = "") -> tuple[str, list[Claim]]:
-        text = generate(client, queries[0], chunks, correction)
-        return text, ([] if text == ABSTAIN else judge(client, text, chunks))
+        with tracing.span(spans, "generate"):
+            text = generate(client, queries[0], chunks, correction)
+        if text == ABSTAIN:
+            return text, []
+        with tracing.span(spans, "judge"):
+            return text, judge(client, text, chunks)
 
     text, claims = attempt()
     unsupported = [c.text for c in claims if not c.supported]
@@ -124,11 +154,12 @@ def answer(client, index: Index, question: str, history: str = "") -> Result:
 
     cited = sorted({int(n) for n in re.findall(r"\[(\d+)\]", text)})
     sources = [chunks[n - 1] for n in cited if 1 <= n <= len(chunks)]
-    return Result(text, queries, chunks, sources, claims)
+    return Result(question, text, queries, chunks, sources, claims, spans)
 
 
 if __name__ == "__main__":
     result = answer(anthropic.Anthropic(), Index.from_dir(DOCS), " ".join(sys.argv[1:]))
+    tracing.write(result.trace)
     print(result.answer, "\n")
     for source in result.sources:
         print(f"  source: {source.id}")
@@ -136,3 +167,4 @@ if __name__ == "__main__":
     print(f"  groundedness: {result.groundedness:.0%}")
     for claim in result.unsupported:
         print(f"  UNSUPPORTED: {claim}")
+    print("\n" + tracing.summarize([result.trace]))

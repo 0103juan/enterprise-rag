@@ -1,7 +1,12 @@
 """Fast checks with no model downloads and no API calls. `python evaluate.py` is the retrieval-quality check."""
 
+from types import SimpleNamespace
+
+import pytest
+
+import evaluate
 import pipeline
-from pipeline import ABSTAIN, Claim
+from pipeline import ABSTAIN, Claim, Rewrite, Verdict
 from retrieval import BM25, Chunk, chunk_markdown, rrf, tokenize
 
 
@@ -58,3 +63,34 @@ def test_abstention_is_not_judged_and_cites_nothing(monkeypatch):
     result = pipeline.answer(None, FakeIndex(), "dress code?")
 
     assert result.answer == ABSTAIN and result.sources == [] and result.groundedness == 1.0
+
+
+class FakeMessages:
+    """Stands in for client.beta.messages: every call uses 1,000 input and 100 output tokens."""
+    usage = SimpleNamespace(input_tokens=1000, output_tokens=100)
+
+    def parse(self, output_format, **request):
+        parsed = (Rewrite(standalone="hotel cap", variants=[]) if output_format is Rewrite
+                  else Verdict(claims=[Claim(text="cap is $220", supported=True)]))
+        return SimpleNamespace(parsed_output=parsed, model="fake", usage=self.usage)
+
+    def create(self, **request):
+        text = SimpleNamespace(type="text", text="The cap is $220 [1].")
+        return SimpleNamespace(stop_reason="end_turn", content=[text], model="fake", usage=self.usage)
+
+
+def test_trace_has_one_span_per_stage_with_its_tokens_and_cost():
+    client = SimpleNamespace(beta=SimpleNamespace(messages=FakeMessages()))
+
+    trace = pipeline.answer(client, FakeIndex(), "hotel cap?").trace
+
+    assert [span["name"] for span in trace["spans"]] == ["rewrite", "retrieve", "generate", "judge"]
+    assert [span["calls"] for span in trace["spans"]] == [1, 0, 1, 1]
+    assert trace["usd"] == pytest.approx(3 * (1000 * 2.00 + 100 * 10.00) / 1e6)  # three calls at list price
+    assert trace["cited"] == ["a.md#x"] and not trace["abstained"]
+
+
+def test_gate_names_only_the_metrics_below_their_floor():
+    floors = {"hit@1": 0.76, "hit@3": 0.96}
+    assert evaluate.below({"hit@1": 0.767, "hit@3": 0.967}, floors) == []
+    assert evaluate.below({"hit@1": 0.733, "hit@3": 0.967}, floors) == ["hit@1 0.733 is below the gate 0.76"]
