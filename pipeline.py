@@ -158,7 +158,8 @@ def answer(client, index: Index, question: str, history: str = "") -> Result:
 
 
 if __name__ == "__main__":
-    result = answer(anthropic.Anthropic(), Index.from_dir(DOCS), " ".join(sys.argv[1:]))
+    sys.stdout.reconfigure(encoding="utf-8")  # piped output on Windows defaults to cp1252, which has no "≈"
+    result =answer(anthropic.Anthropic(), Index.from_dir(DOCS), " ".join(sys.argv[1:]))
     tracing.write(result.trace)
     print(result.answer, "\n")
     for source in result.sources:
