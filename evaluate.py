@@ -10,6 +10,7 @@ import json
 import sys
 from pathlib import Path
 
+from model_gateway import Gateway
 from pydantic import BaseModel
 
 import tracing
@@ -47,9 +48,9 @@ class Grade(BaseModel):
     correct: bool
 
 
-def is_correct(client, question: str, reference: str, candidate: str) -> bool:
+def is_correct(gateway, question: str, reference: str, candidate: str) -> bool:
     response = call_model(
-        client, "parse", output_config={"effort": "low"}, output_format=Grade,
+        gateway, "parse", "grade", output_config={"effort": "low"}, output_format=Grade,
         system="Grade a candidate answer against the reference answer. It is correct if it states the same "
                "facts as the reference; extra detail is fine, a contradiction or a missing key fact is not.",
         messages=[{"role": "user", "content":
@@ -57,18 +58,18 @@ def is_correct(client, question: str, reference: str, candidate: str) -> bool:
     return bool(response.parsed_output and response.parsed_output.correct)
 
 
-def generation_eval(client, index: Index, golden: list[dict]) -> tuple[dict[str, float], list[dict], list[dict]]:
+def generation_eval(gateway, index: Index, golden: list[dict]) -> tuple[dict[str, float], list[dict], list[dict]]:
     """The metrics, one trace per question, and the grader's own spans (an evaluation cost, not a serving cost)."""
     totals = {"retrieved": 0, "cited": 0, "correct": 0, "groundedness": 0.0}
     answerable = sum(1 for row in golden if row["expected"])
     traces, grading = [], []
     for row in golden:
-        result = answer(client, index, row["question"], row.get("history", ""))
+        result = answer(gateway, index, row["question"], row.get("history", ""))
         if row["expected"] is None:  # out-of-scope question: the only right answer is to abstain
             correct = result.answer == ABSTAIN
         else:
             with tracing.span(grading, "grade"):
-                correct = is_correct(client, row["question"], row["answer"], result.answer)
+                correct = is_correct(gateway, row["question"], row["answer"], result.answer)
             totals["retrieved"] += row["expected"] in [c.id for c in result.retrieved]
             totals["cited"] += row["expected"] in [c.id for c in result.sources]
         totals["correct"] += correct
@@ -92,7 +93,9 @@ if __name__ == "__main__":
     gates = json.loads(GATES.read_text(encoding="utf-8"))
     if "--generation" in sys.argv:
         import anthropic
-        metrics, traces, grading = generation_eval(anthropic.Anthropic(), index, golden)
+        # No response cache here: the cost gate below has to see what a question really costs.
+        gateway = Gateway(anthropic.Anthropic(), key="eval", ledger=GATES.parent / ".gateway" / "ledger.jsonl")
+        metrics, traces, grading = generation_eval(gateway, index, golden)
         for metric, value in metrics.items():
             print(f"{metric:<26} {value:.1%}")
         print(tracing.summarize(traces))

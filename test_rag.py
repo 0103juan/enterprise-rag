@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+from model_gateway import Gateway
 
 import evaluate
 import pipeline
@@ -66,27 +67,31 @@ def test_abstention_is_not_judged_and_cites_nothing(monkeypatch):
 
 
 class FakeMessages:
-    """Stands in for client.beta.messages: every call uses 1,000 input and 100 output tokens."""
+    """Stands in for client.beta.messages: every call uses 1,000 input and 100 output tokens, and the model
+    that was asked answers."""
     usage = SimpleNamespace(input_tokens=1000, output_tokens=100)
 
     def parse(self, output_format, **request):
         parsed = (Rewrite(standalone="hotel cap", variants=[]) if output_format is Rewrite
                   else Verdict(claims=[Claim(text="cap is $220", supported=True)]))
-        return SimpleNamespace(parsed_output=parsed, model="fake", usage=self.usage)
+        return SimpleNamespace(parsed_output=parsed, model=request["model"], usage=self.usage)
 
     def create(self, **request):
         text = SimpleNamespace(type="text", text="The cap is $220 [1].")
-        return SimpleNamespace(stop_reason="end_turn", content=[text], model="fake", usage=self.usage)
+        return SimpleNamespace(stop_reason="end_turn", content=[text], model=request["model"], usage=self.usage)
 
 
 def test_trace_has_one_span_per_stage_with_its_tokens_and_cost():
     client = SimpleNamespace(beta=SimpleNamespace(messages=FakeMessages()))
 
-    trace = pipeline.answer(client, FakeIndex(), "hotel cap?").trace
+    trace = pipeline.answer(Gateway(client, routes={"rewrite": "small"}), FakeIndex(), "hotel cap?").trace
 
     assert [span["name"] for span in trace["spans"]] == ["rewrite", "retrieve", "generate", "judge"]
     assert [span["calls"] for span in trace["spans"]] == [1, 0, 1, 1]
-    assert trace["usd"] == pytest.approx(3 * (1000 * 2.00 + 100 * 10.00) / 1e6)  # three calls at list price
+    assert [span.get("model") for span in trace["spans"]] == [
+        "claude-haiku-4-5", None, "claude-sonnet-5-5", "claude-sonnet-5-5"]
+    # one call on the small model and two on the large one, at the gateway's list prices
+    assert trace["usd"] == pytest.approx((1000 * 1.00 + 100 * 5.00 + 2 * (1000 * 2.00 + 100 * 10.00)) / 1e6)
     assert trace["cited"] == ["a.md#x"] and not trace["abstained"]
 
 
