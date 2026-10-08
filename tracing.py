@@ -12,7 +12,6 @@ from contextvars import ContextVar
 from pathlib import Path
 
 TRACES = Path("traces.jsonl")
-USD_PER_MTOK = {"input_tokens": 2.00, "output_tokens": 10.00}  # claude-sonnet-5-5; thinking bills as output
 _open: ContextVar[dict | None] = ContextVar("open_span", default=None)
 
 
@@ -20,26 +19,25 @@ _open: ContextVar[dict | None] = ContextVar("open_span", default=None)
 # collector to send them to; the stage names and attributes carry over.
 @contextmanager
 def span(spans: list[dict], name: str):
-    """Time a stage and collect the usage of every model call made inside it."""
-    stage = {"name": name, "calls": 0, "input_tokens": 0, "output_tokens": 0}
+    """Time a stage and collect the usage and cost of every model call made inside it."""
+    stage = {"name": name, "calls": 0, "input_tokens": 0, "output_tokens": 0, "usd": 0.0}
     token, start = _open.set(stage), time.perf_counter()
     try:
         yield stage
     finally:
         _open.reset(token)
         stage["ms"] = round((time.perf_counter() - start) * 1000)
-        stage["usd"] = sum(stage[kind] * usd / 1e6 for kind, usd in USD_PER_MTOK.items())
         spans.append(stage)
 
 
-def record(response) -> None:
-    """Charge a model response's tokens to the stage that made the call."""
+def record(call: dict) -> None:
+    """Charge a model call, as the gateway recorded it, to the stage that made it."""
     stage = _open.get()
     if stage is not None:
         stage["calls"] += 1
-        stage["model"] = response.model  # the model that answered, which a fallback can change
-        for kind in USD_PER_MTOK:
-            stage[kind] += getattr(response.usage, kind)
+        stage["model"] = call["model"]  # the model that answered, which a fallback can change
+        for kind in ("input_tokens", "output_tokens", "usd"):
+            stage[kind] += call[kind]
 
 
 def write(trace: dict, path: Path = TRACES) -> None:

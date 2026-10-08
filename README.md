@@ -93,7 +93,9 @@ The end-to-end gates call Claude, so they run only when the workflow is started 
 
 **Every question leaves a trace.** `answer()` times each stage and charges every model call to the stage that made it. The command line and the evaluation append one JSON line per question to `traces.jsonl`: the rewritten queries, the chunks retrieved and cited, the answer, whether it abstained, unsupported claims, and a span per stage with duration, calls, tokens, the model that answered, and cost. A corrective pass shows up as a second `generate` and `judge` span, so its price is visible.
 
-**Cost per question comes from the traces**, split by stage, with p50 and p95 latency: `uv run python tracing.py`. The $0.0076 per question reported above is from before tracing existed and includes the grader's calls, which are an evaluation cost and not a serving cost. The per-stage split has not been measured against the live model yet; the next end-to-end run produces it. Prices are list prices in `tracing.py`.
+**Cost per question comes from the traces**, split by stage, with p50 and p95 latency: `uv run python tracing.py`. The $0.0076 per question reported above is from before tracing existed and includes the grader's calls, which are an evaluation cost and not a serving cost. The per-stage split has not been measured against the live model yet; the next end-to-end run produces it.
+
+**Model calls go through [model-gateway](https://github.com/0103juan/model-gateway).** Each stage names its task (`rewrite`, `generate`, `judge`, and `grade` in the evaluation); the gateway picks the model, prices the call at list price and records it, and the trace takes its tokens and cost from that record. The evaluation also appends every call to `.gateway/ledger.jsonl`. It leaves the gateway's response cache off, because the cost gate has to see what a question really costs. Every task still runs on `claude-sonnet-5-5`; no end-to-end run has gone through the gateway yet.
 
 ## Run it
 

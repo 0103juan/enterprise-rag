@@ -7,14 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import anthropic
+from model_gateway import Gateway
 from pydantic import BaseModel
 
 import tracing
 from retrieval import Chunk, Index
 
-# A safety decline is re-run server-side on Anthropic's recommended fallback model.
-LLM = {"model": "claude-sonnet-5-5", "max_tokens": 16000,
-       "betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
 ABSTAIN = "I don't know based on the available documents."
 DOCS = Path(__file__).parent / "data" / "docs"
 
@@ -92,16 +90,17 @@ def _context(chunks: list[Chunk]) -> str:
     return "\n\n".join(f"[{n}] {chunk.text}" for n, chunk in enumerate(chunks, 1))
 
 
-def call_model(client, method: str, **request):
-    """Every model call goes through here, so its tokens are charged to the stage that made it."""
-    response = getattr(client.beta.messages, method)(**LLM, **request)
-    tracing.record(response)
+def call_model(gateway, method: str, task: str, **request):
+    """Every model call goes through here: the gateway picks the model for the task and records the cost,
+    and the trace charges that record to the stage that made the call."""
+    response = getattr(gateway, method)(task=task, **request)
+    tracing.record(gateway.calls[-1])
     return response
 
 
-def rewrite(client, question: str, history: str = "") -> list[str]:
+def rewrite(gateway, question: str, history: str = "") -> list[str]:
     response = call_model(
-        client, "parse", system=REWRITE_SYSTEM, output_config={"effort": "low"}, output_format=Rewrite,
+        gateway, "parse", "rewrite", system=REWRITE_SYSTEM, output_config={"effort": "low"}, output_format=Rewrite,
         messages=[{"role": "user",
                    "content": f"<history>\n{history}\n</history>\n\n<question>\n{question}\n</question>"}])
     parsed = response.parsed_output
@@ -110,9 +109,9 @@ def rewrite(client, question: str, history: str = "") -> list[str]:
     return [parsed.standalone, *parsed.variants[:2]]
 
 
-def generate(client, question: str, chunks: list[Chunk], correction: str = "") -> str:
+def generate(gateway, question: str, chunks: list[Chunk], correction: str = "") -> str:
     response = call_model(
-        client, "create", system=GENERATE_SYSTEM, output_config={"effort": "low"},
+        gateway, "create", "generate", system=GENERATE_SYSTEM, output_config={"effort": "low"},
         messages=[{"role": "user", "content":
                    f"<context>\n{_context(chunks)}\n</context>\n\n<question>\n{question}\n</question>{correction}"}])
     if response.stop_reason == "refusal":
@@ -120,9 +119,9 @@ def generate(client, question: str, chunks: list[Chunk], correction: str = "") -
     return "".join(block.text for block in response.content if block.type == "text").strip()
 
 
-def judge(client, answer: str, chunks: list[Chunk]) -> list[Claim]:
+def judge(gateway, answer: str, chunks: list[Chunk]) -> list[Claim]:
     response = call_model(
-        client, "parse", system=JUDGE_SYSTEM, output_config={"effort": "medium"}, output_format=Verdict,
+        gateway, "parse", "judge", system=JUDGE_SYSTEM, output_config={"effort": "medium"}, output_format=Verdict,
         messages=[{"role": "user", "content":
                    f"<passages>\n{_context(chunks)}\n</passages>\n\n<answer>\n{answer}\n</answer>"}])
     if response.parsed_output is None:  # fail closed: an answer we could not verify is not grounded
@@ -130,20 +129,20 @@ def judge(client, answer: str, chunks: list[Chunk]) -> list[Claim]:
     return response.parsed_output.claims
 
 
-def answer(client, index: Index, question: str, history: str = "") -> Result:
+def answer(gateway, index: Index, question: str, history: str = "") -> Result:
     spans = []
     with tracing.span(spans, "rewrite"):
-        queries = rewrite(client, question, history)
+        queries = rewrite(gateway, question, history)
     with tracing.span(spans, "retrieve"):
         chunks = index.search(queries)
 
     def attempt(correction: str = "") -> tuple[str, list[Claim]]:
         with tracing.span(spans, "generate"):
-            text = generate(client, queries[0], chunks, correction)
+            text = generate(gateway, queries[0], chunks, correction)
         if text == ABSTAIN:
             return text, []
         with tracing.span(spans, "judge"):
-            return text, judge(client, text, chunks)
+            return text, judge(gateway, text, chunks)
 
     text, claims = attempt()
     unsupported = [c.text for c in claims if not c.supported]
@@ -159,7 +158,7 @@ def answer(client, index: Index, question: str, history: str = "") -> Result:
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")  # piped output on Windows defaults to cp1252, which has no "≈"
-    result =answer(anthropic.Anthropic(), Index.from_dir(DOCS), " ".join(sys.argv[1:]))
+    result = answer(Gateway(anthropic.Anthropic()), Index.from_dir(DOCS), " ".join(sys.argv[1:]))
     tracing.write(result.trace)
     print(result.answer, "\n")
     for source in result.sources:
