@@ -2,7 +2,9 @@
 
 [![CI](https://github.com/0103juan/enterprise-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/0103juan/enterprise-rag/actions/workflows/ci.yml)
 
-A retrieval-augmented generation pipeline for company policy documents, built to show what it takes to go from "vector search plus a prompt" to answers you can check.
+**A RAG pipeline run as something you operate, not a notebook.** Every change goes through evaluation gates in CI that fail the build when quality drops. Every question leaves a trace with the time, tokens and cost of each stage, and every model call goes through a gateway that prices and records it. The corpus is a synthetic set of company policies, so the subject here is the operation, not the domain.
+
+The pipeline has the same shape as [consultor-tributario](https://github.com/0103juan/consultor-tributario), which is about a hard domain: Colombian tax law in Spanish, with a corpus built from the Senate's site.
 
 ```
 question + history
@@ -23,6 +25,29 @@ question + history
  5. Hallucination ────▶ answer split into atomic claims, each checked against the        (Claude, structured output)
     check                passages. An unsupported claim triggers one corrective rewrite.
 ```
+
+## Operating it
+
+**The evaluation is a gate, not a report.** `evaluate.py` exits with an error when a metric falls below its floor in `gates.json`, and CI runs it on every push and pull request (`.github/workflows/ci.yml`). The retrieval evaluation uses local models only, so that gate is free and has no secrets. Moving a floor is a change to `gates.json` that shows up in the diff.
+
+| Gate | Floor | Last accepted run | What the margin allows |
+|---|---|---|---|
+| Retrieval hit@1 / hit@3 / MRR@5 | 0.76 / 0.96 / 0.86 | 0.767 / 0.967 / 0.867 | Nothing: the models are deterministic, so losing one question fails |
+| Expected chunk retrieved | 0.93 | 0.969 | One question |
+| Expected chunk cited | 0.84 | 0.906 | Two questions |
+| Answer correct | 0.81 | 0.879 | Two questions, because a single model run is noisy |
+| Groundedness | 0.97 | 1.0 | About one unsupported claim across the whole set |
+| Cost per question | $0.01 at most | see below | A budget, not a measurement |
+
+To see it fail, I cut the candidate pool from 12 to 2 on my machine: hit@1 fell to 0.700, hit@3 to 0.833, and the run ended with `REGRESSION` and exit code 1.
+
+The end-to-end gates call Claude, so they run only when the workflow is started by hand with the `generation` box ticked, and they need an `ANTHROPIC_API_KEY` repository secret. **That job has not been run in CI yet**; the end-to-end numbers above come from a run on my machine.
+
+**Every question leaves a trace.** `answer()` times each stage and charges every model call to the stage that made it. The command line and the evaluation append one JSON line per question to `traces.jsonl`: the rewritten queries, the chunks retrieved and cited, the answer, whether it abstained, unsupported claims, and a span per stage with duration, calls, tokens, the model that answered, and cost. A corrective pass shows up as a second `generate` and `judge` span, so its price is visible.
+
+**Cost per question comes from the traces**, split by stage, with p50 and p95 latency: `uv run python tracing.py`. The $0.0076 per question reported above is from before tracing existed and includes the grader's calls, which are an evaluation cost and not a serving cost. The per-stage split has not been measured against the live model yet; the next end-to-end run produces it.
+
+**Model calls go through [model-gateway](https://github.com/0103juan/model-gateway).** Each stage names its task (`rewrite`, `generate`, `judge`, and `grade` in the evaluation); the gateway picks the model, prices the call at list price and records it, and the trace takes its tokens and cost from that record. The evaluation also appends every call to `.gateway/ledger.jsonl`. It leaves the gateway's response cache off, because the cost gate has to see what a question really costs. Every task still runs on `claude-sonnet-5-5`; no end-to-end run has gone through the gateway yet.
 
 ## Why each stage exists
 
@@ -73,29 +98,6 @@ The full pipeline on all 33 questions (30 single-turn, 2 follow-ups that only ma
 So this configuration buys zero unsupported claims at the price of refusing about one answerable question in ten. Whether that is the right trade depends on the product: for policy answers that people act on, a refusal is cheaper than a confident error. The next experiment is to let the generator make one-step bridges that it states explicitly ("Germany is in the EU, so...") and measure whether correctness rises without groundedness falling.
 
 Caveats: correctness is graded by the same model family that wrote the answers, the set is the one I developed against, and this is a single run.
-
-## Operating it
-
-**The evaluation is a gate, not a report.** `evaluate.py` exits with an error when a metric falls below its floor in `gates.json`, and CI runs it on every push and pull request (`.github/workflows/ci.yml`). The retrieval evaluation uses local models only, so that gate is free and has no secrets. Moving a floor is a change to `gates.json` that shows up in the diff.
-
-| Gate | Floor | Last accepted run | What the margin allows |
-|---|---|---|---|
-| Retrieval hit@1 / hit@3 / MRR@5 | 0.76 / 0.96 / 0.86 | 0.767 / 0.967 / 0.867 | Nothing: the models are deterministic, so losing one question fails |
-| Expected chunk retrieved | 0.93 | 0.969 | One question |
-| Expected chunk cited | 0.84 | 0.906 | Two questions |
-| Answer correct | 0.81 | 0.879 | Two questions, because a single model run is noisy |
-| Groundedness | 0.97 | 1.0 | About one unsupported claim across the whole set |
-| Cost per question | $0.01 at most | see below | A budget, not a measurement |
-
-To see it fail, I cut the candidate pool from 12 to 2 on my machine: hit@1 fell to 0.700, hit@3 to 0.833, and the run ended with `REGRESSION` and exit code 1.
-
-The end-to-end gates call Claude, so they run only when the workflow is started by hand with the `generation` box ticked, and they need an `ANTHROPIC_API_KEY` repository secret. **That job has not been run in CI yet**; the end-to-end numbers above come from a run on my machine.
-
-**Every question leaves a trace.** `answer()` times each stage and charges every model call to the stage that made it. The command line and the evaluation append one JSON line per question to `traces.jsonl`: the rewritten queries, the chunks retrieved and cited, the answer, whether it abstained, unsupported claims, and a span per stage with duration, calls, tokens, the model that answered, and cost. A corrective pass shows up as a second `generate` and `judge` span, so its price is visible.
-
-**Cost per question comes from the traces**, split by stage, with p50 and p95 latency: `uv run python tracing.py`. The $0.0076 per question reported above is from before tracing existed and includes the grader's calls, which are an evaluation cost and not a serving cost. The per-stage split has not been measured against the live model yet; the next end-to-end run produces it.
-
-**Model calls go through [model-gateway](https://github.com/0103juan/model-gateway).** Each stage names its task (`rewrite`, `generate`, `judge`, and `grade` in the evaluation); the gateway picks the model, prices the call at list price and records it, and the trace takes its tokens and cost from that record. The evaluation also appends every call to `.gateway/ledger.jsonl`. It leaves the gateway's response cache off, because the cost gate has to see what a question really costs. Every task still runs on `claude-sonnet-5-5`; no end-to-end run has gone through the gateway yet.
 
 ## Run it
 
